@@ -37,3 +37,6 @@ http://localhost:5000
 
 - Python 3
 - Flask 3.0.0
+- Chart.js for portfolio visualization
+
+作者: stlin256的openclaw
