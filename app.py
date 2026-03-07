@@ -10,8 +10,9 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import json
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
+import yfinance as yf
 
 app = Flask(__name__)
 app.secret_key = 'robinhood-clone-secret-key-2026'
@@ -26,7 +27,7 @@ users_db = {}
 portfolio_db = {}
 transactions_db = {}
 
-# Stock price simulation data
+# Stock price simulation data - extended with more stocks
 STOCKS = {
     'AAPL': {'name': 'Apple Inc.', 'base_price': 185.50, 'sector': 'Technology'},
     'GOOGL': {'name': 'Alphabet Inc.', 'base_price': 141.80, 'sector': 'Technology'},
@@ -38,18 +39,148 @@ STOCKS = {
     'JPM': {'name': 'JPMorgan Chase', 'base_price': 198.40, 'sector': 'Finance'},
     'V': {'name': 'Visa Inc.', 'base_price': 280.15, 'sector': 'Finance'},
     'WMT': {'name': 'Walmart Inc.', 'base_price': 165.30, 'sector': 'Retail'},
+    'DIS': {'name': 'Walt Disney Co.', 'base_price': 112.50, 'sector': 'Entertainment'},
+    'NFLX': {'name': 'Netflix Inc.', 'base_price': 485.30, 'sector': 'Entertainment'},
+    'PYPL': {'name': 'PayPal Holdings', 'base_price': 62.15, 'sector': 'Finance'},
+    'INTC': {'name': 'Intel Corp.', 'base_price': 43.20, 'sector': 'Technology'},
+    'AMD': {'name': 'AMD Inc.', 'base_price': 145.80, 'sector': 'Technology'},
 }
 
-# Current stock prices (simulated real-time)
+# Current stock prices (will be updated with real data)
 current_prices = {symbol: data['base_price'] for symbol, data in STOCKS.items()}
+price_changes = {symbol: 0.0 for symbol in STOCKS}
+
+
+def fetch_real_time_prices():
+    """Fetch real-time stock prices using yfinance"""
+    global current_prices, price_changes, STOCKS
+
+    symbols = list(STOCKS.keys())
+    try:
+        # Fetch data for all symbols at once
+        tickers = yf.Tickers(' '.join(symbols))
+        new_prices = {}
+
+        for symbol in symbols:
+            try:
+                ticker = tickers.tickers[symbol]
+                info = ticker.fast_info
+
+                if hasattr(info, 'last_price') and info.last_price:
+                    new_prices[symbol] = info.last_price
+                elif hasattr(info, 'previous_close') and info.previous_close:
+                    new_prices[symbol] = info.previous_close
+                else:
+                    # Fallback to base price if real price unavailable
+                    new_prices[symbol] = STOCKS[symbol]['base_price']
+            except Exception as e:
+                print(f"Error fetching {symbol}: {e}")
+                new_prices[symbol] = STOCKS[symbol]['base_price']
+
+        # Calculate price changes
+        for symbol in new_prices:
+            if symbol in current_prices and current_prices[symbol] > 0:
+                change = ((new_prices[symbol] - current_prices[symbol]) / current_prices[symbol]) * 100
+                price_changes[symbol] = round(change, 2)
+            else:
+                price_changes[symbol] = 0.0
+
+        current_prices = new_prices
+
+    except Exception as e:
+        print(f"Error fetching real-time prices: {e}")
+        # Fallback to simulated prices
+        simulate_price_change()
+
+
+def fetch_stock_history(symbol, period='1mo'):
+    """Fetch historical stock data for charts"""
+    try:
+        ticker = yf.Ticker(symbol)
+        hist = ticker.history(period=period)
+
+        if hist.empty:
+            return None
+
+        # Format data for Chart.js
+        dates = hist.index.strftime('%Y-%m-%d').tolist()
+        closes = hist['Close'].tolist()
+        volumes = hist['Volume'].tolist()
+
+        return {
+            'dates': dates,
+            'closes': [round(c, 2) for c in closes],
+            'volumes': volumes,
+            'high': round(hist['High'].max(), 2),
+            'low': round(hist['Low'].min(), 2),
+            'open': round(hist['Open'].iloc[0], 2),
+            'current': round(hist['Close'].iloc[-1], 2)
+        }
+    except Exception as e:
+        print(f"Error fetching history for {symbol}: {e}")
+        return None
+
+
+def search_stocks(query):
+    """Search for stocks by symbol or company name"""
+    results = []
+
+    # Expand search with more stocks
+    search_stocks_db = {
+        'AAPL': 'Apple Inc.',
+        'GOOGL': 'Alphabet Inc.',
+        'MSFT': 'Microsoft Corporation',
+        'AMZN': 'Amazon.com Inc.',
+        'TSLA': 'Tesla Inc.',
+        'NVDA': 'NVIDIA Corporation',
+        'META': 'Meta Platforms Inc.',
+        'JPM': 'JPMorgan Chase & Co.',
+        'V': 'Visa Inc.',
+        'WMT': 'Walmart Inc.',
+        'DIS': 'The Walt Disney Company',
+        'NFLX': 'Netflix Inc.',
+        'PYPL': 'PayPal Holdings Inc.',
+        'INTC': 'Intel Corporation',
+        'AMD': 'Advanced Micro Devices',
+        'BA': 'Boeing Company',
+        'GS': 'Goldman Sachs',
+        'IBM': 'IBM Corporation',
+        'ORCL': 'Oracle Corporation',
+        'CRM': 'Salesforce Inc.',
+        'ADBE': 'Adobe Inc.',
+        'CSCO': 'Cisco Systems',
+        'PEP': 'PepsiCo Inc.',
+        'KO': 'Coca-Cola Company',
+        'MCD': 'McDonalds Corp.',
+        'SBUX': 'Starbucks Corp.',
+        'NKE': 'Nike Inc.',
+        'HD': 'Home Depot Inc.',
+        'BAC': 'Bank of America',
+    }
+
+    query_lower = query.lower()
+    for symbol, name in search_stocks_db.items():
+        if query_lower in symbol.lower() or query_lower in name.lower():
+            price = current_prices.get(symbol, 0)
+            results.append({
+                'symbol': symbol,
+                'name': name,
+                'price': round(price, 2) if price else 0,
+                'change': price_changes.get(symbol, 0)
+            })
+
+    return results
+
 
 def simulate_price_change():
-    """Simulate real-time price changes"""
-    global current_prices
+    """Simulate real-time price changes (fallback)"""
+    global current_prices, price_changes
     for symbol in current_prices:
-        change_percent = random.uniform(-0.5, 0.5)  # -0.5% to +0.5% change
+        change_percent = random.uniform(-0.5, 0.5)
+        old_price = current_prices[symbol]
         current_prices[symbol] *= (1 + change_percent / 100)
         current_prices[symbol] = round(current_prices[symbol], 2)
+        price_changes[symbol] = round(((current_prices[symbol] - old_price) / old_price) * 100, 2)
 
 
 class User(UserMixin):
@@ -187,6 +318,7 @@ BASE_TEMPLATE = """
             padding: 1.25rem;
             border: 1px solid rgba(255,255,255,0.1);
             transition: all 0.3s;
+            cursor: pointer;
         }
         .stock-card:hover {
             transform: translateY(-4px);
@@ -318,6 +450,144 @@ BASE_TEMPLATE = """
             height: 300px;
             margin-top: 1rem;
         }
+        .search-container {
+            position: relative;
+            margin-bottom: 2rem;
+        }
+        .search-input {
+            width: 100%;
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(255,255,255,0.05);
+            color: #fff;
+            font-size: 1rem;
+        }
+        .search-input:focus {
+            outline: none;
+            border-color: #00d4aa;
+        }
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: rgba(26, 26, 46, 0.98);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            max-height: 400px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+        .search-results.show {
+            display: block;
+        }
+        .search-result-item {
+            padding: 1rem 1.5rem;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .search-result-item:hover {
+            background: rgba(0,212,170,0.1);
+        }
+        .search-result-symbol {
+            font-weight: 700;
+            color: #00d4aa;
+        }
+        .search-result-name {
+            color: rgba(255,255,255,0.6);
+            font-size: 0.875rem;
+        }
+        .search-result-price {
+            text-align: right;
+        }
+        .stock-detail-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 2rem;
+        }
+        .stock-detail-info h1 {
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+        }
+        .stock-detail-price {
+            font-size: 3rem;
+            font-weight: 700;
+        }
+        .stock-detail-change {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-top: 0.5rem;
+        }
+        .stock-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            padding: 1rem;
+            text-align: center;
+        }
+        .stat-label {
+            color: rgba(255,255,255,0.6);
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-value {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-top: 0.25rem;
+        }
+        .time-range-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 1rem;
+        }
+        .time-range-btn {
+            padding: 0.5rem 1rem;
+            background: rgba(255,255,255,0.05);
+            border: none;
+            border-radius: 6px;
+            color: rgba(255,255,255,0.6);
+            cursor: pointer;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .time-range-btn.active {
+            background: #00d4aa;
+            color: #1a1a2e;
+        }
+        .buy-sell-form {
+            display: flex;
+            gap: 1rem;
+            align-items: flex-end;
+        }
+        .buy-sell-form .form-group {
+            margin-bottom: 0;
+            flex: 1;
+        }
+        .loading-spinner {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #00d4aa;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 0.5rem;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -351,7 +621,7 @@ BASE_TEMPLATE = """
         {% block content %}{% endblock %}
     </div>
     <script>
-        // Auto-refresh prices every 3 seconds
+        // Auto-refresh prices every 10 seconds
         {% if request.endpoint == 'index' or request.endpoint == 'portfolio' %}
         setInterval(() => {
             fetch('/api/prices')
@@ -359,13 +629,71 @@ BASE_TEMPLATE = """
                 .then(data => {
                     document.querySelectorAll('.stock-price').forEach(el => {
                         const symbol = el.dataset.symbol;
-                        if (data[symbol]) {
-                            el.textContent = '$' + data[symbol].toFixed(2);
+                        if (data.prices && data.prices[symbol]) {
+                            el.textContent = '$' + data.prices[symbol].toFixed(2);
+                        }
+                    });
+                    document.querySelectorAll('.stock-change-display').forEach(el => {
+                        const symbol = el.dataset.symbol;
+                        if (data.changes && data.changes[symbol] !== undefined) {
+                            const change = data.changes[symbol];
+                            el.textContent = (change >= 0 ? '▲' : '▼') + ' ' + Math.abs(change).toFixed(2) + '%';
+                            el.className = 'stock-change stock-change-display ' + (change >= 0 ? 'positive' : 'negative');
                         }
                     });
                 });
-        }, 3000);
+        }, 10000);
         {% endif %}
+
+        // Search functionality
+        const searchInput = document.getElementById('search-input');
+        const searchResults = document.getElementById('search-results');
+
+        if (searchInput) {
+            let searchTimeout;
+            searchInput.addEventListener('input', (e) => {
+                clearTimeout(searchTimeout);
+                const query = e.target.value.trim();
+
+                if (query.length < 1) {
+                    searchResults.classList.remove('show');
+                    return;
+                }
+
+                searchTimeout = setTimeout(() => {
+                    fetch(`/api/search?q=${encodeURIComponent(query)}`)
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.results && data.results.length > 0) {
+                                searchResults.innerHTML = data.results.map(r => `
+                                    <a href="/stock/${r.symbol}" class="search-result-item">
+                                        <div>
+                                            <div class="search-result-symbol">${r.symbol}</div>
+                                            <div class="search-result-name">${r.name}</div>
+                                        </div>
+                                        <div class="search-result-price">
+                                            <div>$${r.price.toFixed(2)}</div>
+                                            <div class="${r.change >= 0 ? 'positive' : 'negative'}" style="font-size: 0.875rem;">
+                                                ${r.change >= 0 ? '▲' : '▼'} ${Math.abs(r.change).toFixed(2)}%
+                                            </div>
+                                        </div>
+                                    </a>
+                                `).join('');
+                                searchResults.classList.add('show');
+                            } else {
+                                searchResults.innerHTML = '<div class="search-result-item">No results found</div>';
+                                searchResults.classList.add('show');
+                            }
+                        });
+                }, 300);
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+                    searchResults.classList.remove('show');
+                }
+            });
+        }
     </script>
 </body>
 </html>
@@ -434,19 +762,26 @@ INDEX_TEMPLATE = """
 <div class="card">
     <div class="card-header">
         <h2 class="card-title">Stock Market</h2>
-        <span class="price-updating" style="color: rgba(255,255,255,0.6);">● Live Prices</span>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+            <span class="loading-spinner"></span>
+            <span class="price-updating" style="color: rgba(255,255,255,0.6);">Live Prices</span>
+        </div>
+    </div>
+    <div class="search-container">
+        <input type="text" id="search-input" class="search-input" placeholder="Search stocks by symbol or name...">
+        <div id="search-results" class="search-results"></div>
     </div>
     <div class="stock-grid">
         {% for symbol, data in stocks.items() %}
-        <div class="stock-card">
+        <a href="/stock/{{ symbol }}" class="stock-card" style="text-decoration: none; color: inherit; display: block;">
             <div class="stock-symbol">{{ symbol }}</div>
             <div class="stock-name">{{ data.name }}</div>
             <div class="stock-price" data-symbol="{{ symbol }}">${{ "%.2f"|format(prices[symbol]) }}</div>
-            <div class="stock-change">
-                <span class="positive">▲ {{ data.sector }}</span>
+            <div class="stock-change stock-change-display {{ 'positive' if changes[symbol] >= 0 else 'negative' }}" data-symbol="{{ symbol }}">
+                {{ '▲' if changes[symbol] >= 0 else '▼' }} {{ "%.2f"|format(changes[symbol]|abs) }}%
             </div>
             {% if current_user.is_authenticated %}
-            <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+            <div style="margin-top: 1rem; display: flex; gap: 0.5rem;" onclick="event.stopPropagation();">
                 <form action="/buy" method="POST" style="flex: 1;">
                     <input type="hidden" name="symbol" value="{{ symbol }}">
                     <input type="hidden" name="price" value="{{ prices[symbol] }}">
@@ -455,7 +790,7 @@ INDEX_TEMPLATE = """
                 </form>
             </div>
             {% endif %}
-        </div>
+        </a>
         {% endfor %}
     </div>
 </div>
@@ -513,7 +848,7 @@ PORTFOLIO_TEMPLATE = """
             <tbody>
                 {% for symbol, holding in portfolio.items() %}
                 <tr>
-                    <td><strong style="color: #00d4aa;">{{ symbol }}</strong></td>
+                    <td><a href="/stock/{{ symbol }}" style="color: #00d4aa; text-decoration: none;"><strong>{{ symbol }}</strong></a></td>
                     <td>{{ holding.shares }}</td>
                     <td>${{ "%.2f"|format(holding.avg_cost) }}</td>
                     <td>${{ "%.2f"|format(prices[symbol]) }}</td>
@@ -626,12 +961,12 @@ TRANSACTIONS_TEMPLATE = """
                         {{ tx.type }}
                     </span>
                 </td>
-                <td><strong style="color: #00d4aa;">{{ tx.symbol }}</strong></td>
+                <td><a href="/stock/{{ tx.symbol }}" style="color: #00d4aa; text-decoration: none;"><strong>{{ tx.symbol }}</strong></a></td>
                 <td>{{ tx.shares }}</td>
                 <td>${{ "%.2f"|format(tx.price) }}</td>
                 <td>${{ "%.2f"|format(tx.total) }}</td>
             </tr>
-            {% endfor %}
+        {% endfor %}
         </tbody>
     </table>
     {% else %}
@@ -644,14 +979,249 @@ TRANSACTIONS_TEMPLATE = """
 {% endblock %}
 """
 
-app.template_filters('json') = lambda v: json.dumps(v)
+STOCK_DETAIL_TEMPLATE = """
+{% extends "base" %}
+{% block title %}{{ symbol }} - {{ name }} - OpenStock{% endblock %}
+{% block content %}
+<div class="card">
+    <div class="stock-detail-header">
+        <div class="stock-detail-info">
+            <h1>{{ symbol }}</h1>
+            <p style="color: rgba(255,255,255,0.6); font-size: 1.125rem;">{{ name }}</p>
+            <p style="color: rgba(255,255,255,0.4); font-size: 0.875rem;">{{ sector }}</p>
+        </div>
+        <div class="stock-detail-price-section">
+            <div class="stock-detail-price">${{ "%.2f"|format(price) }}</div>
+            <div class="stock-detail-change {{ 'positive' if change >= 0 else 'negative' }}">
+                {{ '▲' if change >= 0 else '▼' }} ${{ "%.2f"|format(change_amount|abs) }} ({{ "%.2f"|format(change|abs) }}%)
+            </div>
+        </div>
+    </div>
+
+    <div class="stock-stats">
+        <div class="stat-card">
+            <div class="stat-label">Open</div>
+            <div class="stat-value">${{ "%.2f"|format(stats.open) if stats else price }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">High</div>
+            <div class="stat-value">${{ "%.2f"|format(stats.high) if stats else price }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Low</div>
+            <div class="stat-value">${{ "%.2f"|format(stats.low) if stats else price }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Volume</div>
+            <div class="stat-value">{{ (stats.volumes[-1] / 1000000)|round(1) }}M</div>
+        </div>
+    </div>
+
+    {% if history %}
+    <div class="time-range-selector">
+        <button class="time-range-btn {{ 'active' if period == '1d' else '' }}" onclick="loadChart('1d')">1D</button>
+        <button class="time-range-btn {{ 'active' if period == '5d' else '' }}" onclick="loadChart('5d')">5D</button>
+        <button class="time-range-btn {{ 'active' if period == '1mo' else '' }}" onclick="loadChart('1mo')">1M</button>
+        <button class="time-range-btn {{ 'active' if period == '3mo' else '' }}" onclick="loadChart('3mo')">3M</button>
+        <button class="time-range-btn {{ 'active' if period == '1y' else '' }}" onclick="loadChart('1y')">1Y</button>
+        <button class="time-range-btn {{ 'active' if period == '5y' else '' }}" onclick="loadChart('5y')">5Y</button>
+    </div>
+    <div class="chart-container" style="height: 400px;">
+        <canvas id="priceChart"></canvas>
+    </div>
+    {% endif %}
+</div>
+
+{% if current_user.is_authenticated %}
+<div class="card">
+    <h2 class="card-title" style="margin-bottom: 1.5rem;">Trade {{ symbol }}</h2>
+    <div class="buy-sell-form">
+        <div class="form-group">
+            <label>Shares</label>
+            <input type="number" id="trade-shares" min="1" value="1">
+        </div>
+        <form action="/buy" method="POST" style="flex: 1;">
+            <input type="hidden" name="symbol" value="{{ symbol }}">
+            <input type="hidden" name="price" value="{{ price }}">
+            <input type="hidden" name="shares" id="buy-shares" value="1">
+            <button type="submit" class="btn btn-primary" style="width: 100%;">Buy</button>
+        </form>
+        {% if portfolio and symbol in portfolio %}
+        <form action="/sell" method="POST" style="flex: 1;">
+            <input type="hidden" name="symbol" value="{{ symbol }}">
+            <input type="hidden" name="price" value="{{ price }}">
+            <input type="hidden" name="shares" id="sell-shares" value="1">
+            <button type="submit" class="btn btn-danger" style="width: 100%;">Sell</button>
+        </form>
+        {% endif %}
+    </div>
+    {% if portfolio and symbol in portfolio %}
+    <p style="margin-top: 1rem; color: rgba(255,255,255,0.6);">You own {{ portfolio[symbol].shares }} shares</p>
+    {% endif %}
+</div>
+{% endif %}
+
+<script>
+    let currentSymbol = '{{ symbol }}';
+    let chartInstance = null;
+
+    function loadChart(period) {
+        fetch(`/api/history/${currentSymbol}?period=${period}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.dates && data.dates.length > 0) {
+                    renderChart(data, period);
+                    document.querySelectorAll('.time-range-btn').forEach(btn => {
+                        btn.classList.toggle('active', btn.textContent.toLowerCase() === period);
+                    });
+                }
+            });
+    }
+
+    function renderChart(data, period) {
+        const ctx = document.getElementById('priceChart').getContext('2d');
+
+        if (chartInstance) {
+            chartInstance.destroy();
+        }
+
+        const isUp = data.closes[data.closes.length - 1] >= data.closes[0];
+        const color = isUp ? '#00d4aa' : '#ff4757';
+
+        chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.dates,
+                datasets: [{
+                    label: 'Price',
+                    data: data.closes,
+                    borderColor: color,
+                    backgroundColor: color + '20',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: period === '1d' || period === '5d' ? 2 : 0,
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return '$' + context.parsed.y.toFixed(2);
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: {
+                            color: 'rgba(255,255,255,0.1)'
+                        },
+                        ticks: {
+                            color: 'rgba(255,255,255,0.6)',
+                            maxTicksLimit: 8
+                        }
+                    },
+                    y: {
+                        grid: {
+                            color: 'rgba(255,255,255,0.1)'
+                        },
+                        ticks: {
+                            color: 'rgba(255,255,255,0.6)',
+                            callback: function(value) {
+                                return '$' + value.toFixed(0);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Sync share inputs
+    document.getElementById('trade-shares').addEventListener('input', function(e) {
+        document.getElementById('buy-shares').value = e.target.value;
+        if (document.getElementById('sell-shares')) {
+            document.getElementById('sell-shares').value = e.target.value;
+        }
+    });
+
+    // Initial chart render
+    {% if history %}
+    renderChart({{ history|tojson }}, '{{ period }}');
+    {% endif %}
+</script>
+{% endblock %}
+"""
+
+app.template_filters['json'] = lambda v: json.dumps(v)
+app.template_filters['abs'] = lambda v: abs(v) if v else 0
 
 
 @app.route('/')
 def index():
-    simulate_price_change()
+    fetch_real_time_prices()
     template = BASE_TEMPLATE.replace('{% block content %}{% endblock %}', INDEX_TEMPLATE)
-    return render_template_string(template, stocks=STOCKS, prices=current_prices)
+    return render_template_string(template, stocks=STOCKS, prices=current_prices, changes=price_changes)
+
+
+@app.route('/stock/<symbol>')
+def stock_detail(symbol):
+    symbol = symbol.upper()
+
+    # Add unknown stocks on-the-fly
+    if symbol not in STOCKS:
+        try:
+            ticker = yf.Ticker(symbol)
+            info = ticker.fast_info
+            name = ticker.info.get('longName', ticker.info.get('shortName', symbol))
+            sector = ticker.info.get('sector', 'Unknown')
+            price = info.last_price if hasattr(info, 'last_price') and info.last_price else 0
+            STOCKS[symbol] = {'name': name, 'base_price': price, 'sector': sector}
+            current_prices[symbol] = price
+            price_changes[symbol] = 0.0
+        except:
+            return "Stock not found", 404
+    else:
+        name = STOCKS[symbol]['name']
+        sector = STOCKS[symbol]['sector']
+
+    fetch_real_time_prices()
+    price = current_prices.get(symbol, STOCKS[symbol]['base_price'])
+    change = price_changes.get(symbol, 0)
+    change_amount = price * (change / 100) if price else 0
+
+    # Get history for chart
+    period = request.args.get('period', '1mo')
+    history = fetch_stock_history(symbol, period)
+
+    # Get user portfolio
+    portfolio = portfolio_db.get(current_user.id, {}) if current_user.is_authenticated else {}
+
+    template = BASE_TEMPLATE.replace('{% block content %}{% endblock %}', STOCK_DETAIL_TEMPLATE)
+    return render_template_string(
+        template,
+        symbol=symbol,
+        name=name,
+        sector=sector,
+        price=price,
+        change=change,
+        change_amount=change_amount,
+        stats=history,
+        history=history,
+        period=period,
+        portfolio=portfolio
+    )
 
 
 @app.route('/register', methods=['GET', 'POST'])
@@ -801,7 +1371,7 @@ def sell_stock():
 @login_required
 def portfolio():
     portfolio = portfolio_db.get(current_user.id, {})
-    simulate_price_change()
+    fetch_real_time_prices()
 
     # Calculate totals
     invested = 0
@@ -842,9 +1412,33 @@ def transactions():
 
 @app.route('/api/prices')
 def api_prices():
-    simulate_price_change()
-    return jsonify(current_prices)
+    fetch_real_time_prices()
+    return jsonify({
+        'prices': current_prices,
+        'changes': price_changes,
+        'stocks': STOCKS
+    })
+
+
+@app.route('/api/search')
+def api_search():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'results': []})
+
+    results = search_stocks(query)
+    return jsonify({'results': results})
+
+
+@app.route('/api/history/<symbol>')
+def api_history(symbol):
+    period = request.args.get('period', '1mo')
+    history = fetch_stock_history(symbol.upper(), period)
+    return jsonify(history or {})
 
 
 if __name__ == '__main__':
+    # Initial fetch of real prices
+    print("Fetching initial stock prices...")
+    fetch_real_time_prices()
     app.run(debug=True, host='0.0.0.0', port=5000)
