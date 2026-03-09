@@ -26,6 +26,7 @@ login_manager.login_view = 'login'
 users_db = {}
 portfolio_db = {}
 transactions_db = {}
+watchlist_db = {}  # User watchlists: {user_id: [symbol1, symbol2, ...]}
 
 # Stock price simulation data - extended with more stocks
 STOCKS = {
@@ -1435,6 +1436,408 @@ def api_history(symbol):
     period = request.args.get('period', '1mo')
     history = fetch_stock_history(symbol.upper(), period)
     return jsonify(history or {})
+
+
+# ==================== NEW FEATURES ====================
+
+@app.route('/watchlist')
+@login_required
+def watchlist():
+    """Display user's watchlist"""
+    user_id = current_user.get_id()
+    watchlist = watchlist_db.get(user_id, [])
+
+    watchlist_data = []
+    for symbol in watchlist:
+        if symbol in STOCKS:
+            watchlist_data.append({
+                'symbol': symbol,
+                'name': STOCKS[symbol]['name'],
+                'price': current_prices.get(symbol, 0),
+                'change': price_changes.get(symbol, 0),
+                'sector': STOCKS[symbol]['sector']
+            })
+
+    # Calculate total portfolio value and cash
+    portfolio = portfolio_db.get(user_id, {})
+    cash = users_db.get(user_id, {}).get('cash', 100000)
+    portfolio_value = sum(
+        holdings['shares'] * current_prices.get(symbol, 0)
+        for symbol, holdings in portfolio.items()
+    )
+
+    total_value = cash + portfolio_value
+
+    return f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Watchlist - Robinhood Clone</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #fff; }}
+        .header {{ background: #1a1a1a; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; }}
+        .logo {{ font-size: 24px; font-weight: bold; color: #00c805; }}
+        .nav {{ display: flex; gap: 20px; }}
+        .nav a {{ color: #888; text-decoration: none; transition: color 0.2s; }}
+        .nav a:hover, .nav a.active {{ color: #fff; }}
+        .user-info {{ color: #888; }}
+        .container {{ max-width: 1200px; margin: 0 auto; padding: 40px 20px; }}
+        .page-title {{ font-size: 32px; margin-bottom: 30px; }}
+        .summary-cards {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }}
+        .card {{ background: #1a1a1a; padding: 20px; border-radius: 12px; border: 1px solid #333; }}
+        .card-label {{ color: #888; font-size: 14px; margin-bottom: 8px; }}
+        .card-value {{ font-size: 28px; font-weight: bold; }}
+        .positive {{ color: #00c805; }}
+        .negative {{ color: #ff4444; }}
+        .watchlist-grid {{ display: grid; gap: 12px; }}
+        .watchlist-item {{ background: #1a1a1a; padding: 20px; border-radius: 12px; border: 1px solid #333; display: flex; justify-content: space-between; align-items: center; transition: background 0.2s; }}
+        .watchlist-item:hover {{ background: #252525; }}
+        .stock-info {{ display: flex; flex-direction: column; gap: 4px; }}
+        .stock-symbol {{ font-size: 18px; font-weight: bold; }}
+        .stock-name {{ color: #888; font-size: 14px; }}
+        .stock-price {{ text-align: right; }}
+        .price-value {{ font-size: 18px; font-weight: bold; }}
+        .price-change {{ font-size: 14px; }}
+        .stock-actions {{ display: flex; gap: 10px; }}
+        .btn {{ padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.2s; }}
+        .btn-buy {{ background: #00c805; color: #000; }}
+        .btn-buy:hover {{ background: #00a804; }}
+        .btn-remove {{ background: #333; color: #fff; }}
+        .btn-remove:hover {{ background: #444; }}
+        .empty-state {{ text-align: center; padding: 60px; color: #888; }}
+        .empty-state h3 {{ margin-bottom: 10px; color: #fff; }}
+        .add-form {{ background: #1a1a1a; padding: 20px; border-radius: 12px; margin-top: 30px; }}
+        .add-form h3 {{ margin-bottom: 15px; }}
+        .form-group {{ display: flex; gap: 10px; }}
+        .form-group input {{ flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #333; background: #0a0a0a; color: #fff; }}
+        .form-group button {{ padding: 12px 24px; border-radius: 8px; border: none; background: #00c805; color: #000; font-weight: bold; cursor: pointer; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">Robinhood Clone</div>
+        <nav class="nav">
+            <a href="/">Home</a>
+            <a href="/portfolio">Portfolio</a>
+            <a href="/watchlist" class="active">Watchlist</a>
+            <a href="/market">Market</a>
+            <a href="/transactions">Transactions</a>
+        </nav>
+        <div class="user-info">
+            Cash: <span class="positive">${total_value:,.2f}</span>
+            <a href="/logout" style="color: #888; margin-left: 20px;">Logout</a>
+        </div>
+    </div>
+    <div class="container">
+        <h1 class="page-title">Your Watchlist</h1>
+        <div class="summary-cards">
+            <div class="card">
+                <div class="card-label">Stocks Watching</div>
+                <div class="card-value">{len(watchlist_data)}</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Portfolio Value</div>
+                <div class="card-value">${portfolio_value:,.2f}</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Available Cash</div>
+                <div class="card-value">${cash:,.2f}</div>
+            </div>
+        </div>
+        {"<div class='empty-state'><h3>No stocks in watchlist</h3><p>Add stocks to track their prices</p></div>" if not watchlist_data else ""}
+        <div class="watchlist-grid">
+            {"".join(f'''
+            <div class="watchlist-item">
+                <div class="stock-info">
+                    <span class="stock-symbol">{item['symbol']}</span>
+                    <span class="stock-name">{item['name']} - {item['sector']}</span>
+                </div>
+                <div class="stock-price">
+                    <div class="price-value">${item['price']:,.2f}</div>
+                    <div class="price-change {'positive' if item['change'] >= 0 else 'negative'}">{item['change']:+.2f}%</div>
+                </div>
+                <div class="stock-actions">
+                    <form action="/buy" method="POST" style="display:inline;">
+                        <input type="hidden" name="symbol" value="{item['symbol']}">
+                        <button type="submit" class="btn btn-buy">Buy</button>
+                    </form>
+                    <form action="/api/watchlist/remove" method="POST" style="display:inline;">
+                        <input type="hidden" name="symbol" value="{item['symbol']}">
+                        <button type="submit" class="btn btn-remove">Remove</button>
+                    </form>
+                </div>
+            </div>''' for item in watchlist_data)}
+        </div>
+        <div class="add-form">
+            <h3>Add to Watchlist</h3>
+            <form class="form-group" action="/api/watchlist/add" method="POST">
+                <input type="text" name="symbol" placeholder="Enter stock symbol (e.g., AAPL)" required style="text-transform: uppercase;">
+                <button type="submit">Add</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+
+@app.route('/api/watchlist/add', methods=['POST'])
+@login_required
+def add_to_watchlist():
+    """Add a stock to user's watchlist"""
+    symbol = request.form.get('symbol', '').upper().strip()
+
+    if not symbol:
+        flash('Please enter a stock symbol')
+        return redirect('/watchlist')
+
+    if symbol not in STOCKS:
+        flash(f'Stock {symbol} not found')
+        return redirect('/watchlist')
+
+    user_id = current_user.get_id()
+    if user_id not in watchlist_db:
+        watchlist_db[user_id] = []
+
+    if symbol in watchlist_db[user_id]:
+        flash(f'{symbol} is already in your watchlist')
+        return redirect('/watchlist')
+
+    watchlist_db[user_id].append(symbol)
+    flash(f'Added {symbol} to your watchlist')
+    return redirect('/watchlist')
+
+
+@app.route('/api/watchlist/remove', methods=['POST'])
+@login_required
+def remove_from_watchlist():
+    """Remove a stock from user's watchlist"""
+    symbol = request.form.get('symbol', '').upper().strip()
+
+    user_id = current_user.get_id()
+    if user_id in watchlist_db and symbol in watchlist_db[user_id]:
+        watchlist_db[user_id].remove(symbol)
+        flash(f'Removed {symbol} from your watchlist')
+
+    return redirect('/watchlist')
+
+
+@app.route('/market')
+@login_required
+def market():
+    """Market overview dashboard with top movers and sector performance"""
+    # Get top gainers and losers
+    sorted_by_change = sorted(
+        [(symbol, data['name'], current_prices.get(symbol, 0), price_changes.get(symbol, 0), data['sector'])
+         for symbol, data in STOCKS.items()],
+        key=lambda x: x[3],
+        reverse=True
+    )
+
+    top_gainers = sorted_by_change[:5]
+    top_losers = sorted_by_change[-5:][::-1]
+
+    # Sector performance
+    sectors = {}
+    for symbol, data in STOCKS.items():
+        sector = data['sector']
+        if sector not in sectors:
+            sectors[sector] = []
+        sectors[sector].append(price_changes.get(symbol, 0))
+
+    sector_performance = []
+    for sector, changes in sectors.items():
+        avg_change = sum(changes) / len(changes) if changes else 0
+        sector_performance.append({
+            'sector': sector,
+            'change': avg_change,
+            'count': len(changes)
+        })
+    sector_performance.sort(key=lambda x: x['change'], reverse=True)
+
+    # Calculate portfolio stats
+    user_id = current_user.get_id()
+    portfolio = portfolio_db.get(user_id, {})
+    cash = users_db.get(user_id, {}).get('cash', 100000)
+    portfolio_value = sum(
+        holdings['shares'] * current_prices.get(symbol, 0)
+        for symbol, holdings in portfolio.items()
+    )
+    total_value = cash + portfolio_value
+
+    # All stocks sorted by performance
+    all_stocks = [(symbol, data['name'], current_prices.get(symbol, 0), price_changes.get(symbol, 0), data['sector'])
+                  for symbol, data in STOCKS.items()]
+
+    return f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Overview - Robinhood Clone</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0a; color: #fff; }}
+        .header {{ background: #1a1a1a; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; }}
+        .logo {{ font-size: 24px; font-weight: bold; color: #00c805; }}
+        .nav {{ display: flex; gap: 20px; }}
+        .nav a {{ color: #888; text-decoration: none; transition: color 0.2s; }}
+        .nav a:hover, .nav a.active {{ color: #fff; }}
+        .container {{ max-width: 1400px; margin: 0 auto; padding: 40px 20px; }}
+        .page-title {{ font-size: 32px; margin-bottom: 30px; }}
+        .market-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 30px; margin-bottom: 40px; }}
+        @media (max-width: 900px) {{ .market-grid {{ grid-template-columns: 1fr; }} }}
+        .section {{ background: #1a1a1a; padding: 24px; border-radius: 12px; border: 1px solid #333; }}
+        .section-title {{ font-size: 20px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }}
+        .positive {{ color: #00c805; }}
+        .negative {{ color: #ff4444; }}
+        .stock-list {{ display: flex; flex-direction: column; gap: 12px; }}
+        .stock-row {{ display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #252525; border-radius: 8px; transition: background 0.2s; }}
+        .stock-row:hover {{ background: #2a2a2a; }}
+        .stock-symbol {{ font-weight: bold; font-size: 16px; }}
+        .stock-name {{ color: #888; font-size: 13px; }}
+        .stock-price {{ text-align: right; }}
+        .price-value {{ font-weight: bold; }}
+        .price-change {{ font-size: 13px; }}
+        .sector-list {{ display: flex; flex-direction: column; gap: 10px; }}
+        .sector-row {{ display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #252525; border-radius: 8px; }}
+        .sector-name {{ font-weight: 600; }}
+        .sector-count {{ color: #666; font-size: 12px; margin-left: 8px; }}
+        .full-stocks {{ margin-top: 40px; }}
+        .stocks-table {{ width: 100%; border-collapse: collapse; }}
+        .stocks-table th {{ text-align: left; padding: 12px; color: #888; border-bottom: 1px solid #333; }}
+        .stocks-table td {{ padding: 14px 12px; border-bottom: 1px solid #252525; }}
+        .stocks-table tr:hover {{ background: #1f1f1f; }}
+        .btn {{ padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600; transition: all 0.2s; }}
+        .btn-watch {{ background: #333; color: #fff; }}
+        .btn-watch:hover {{ background: #444; }}
+        .btn-buy {{ background: #00c805; color: #000; }}
+        .btn-buy:hover {{ background: #00a804; }}
+        .action-buttons {{ display: flex; gap: 8px; }}
+        .user-info {{ color: #888; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">Robinhood Clone</div>
+        <nav class="nav">
+            <a href="/">Home</a>
+            <a href="/portfolio">Portfolio</a>
+            <a href="/watchlist">Watchlist</a>
+            <a href="/market" class="active">Market</a>
+            <a href="/transactions">Transactions</a>
+        </nav>
+        <div class="user-info">
+            Total: <span class="positive">${total_value:,.2f}</span>
+            <a href="/logout" style="color: #888; margin-left: 20px;">Logout</a>
+        </div>
+    </div>
+    <div class="container">
+        <h1 class="page-title">Market Overview</h1>
+
+        <div class="market-grid">
+            <div class="section">
+                <div class="section-title">
+                    <span>Top Gainers</span>
+                    <span class="positive">+</span>
+                </div>
+                <div class="stock-list">
+                    {"".join(f'''
+                    <div class="stock-row">
+                        <div>
+                            <div class="stock-symbol">{item[0]}</div>
+                            <div class="stock-name">{item[1]}</div>
+                        </div>
+                        <div class="stock-price">
+                            <div class="price-value">${item[2]:,.2f}</div>
+                            <div class="price-change positive">{item[3]:+.2f}%</div>
+                        </div>
+                    </div>''' for item in top_gainers)}
+                </div>
+            </div>
+
+            <div class="section">
+                <div class="section-title">
+                    <span>Top Losers</span>
+                    <span class="negative">-</span>
+                </div>
+                <div class="stock-list">
+                    {"".join(f'''
+                    <div class="stock-row">
+                        <div>
+                            <div class="stock-symbol">{item[0]}</div>
+                            <div class="stock-name">{item[1]}</div>
+                        </div>
+                        <div class="stock-price">
+                            <div class="price-value">${item[2]:,.2f}</div>
+                            <div class="price-change negative">{item[3]:+.2f}%</div>
+                        </div>
+                    </div>''' for item in top_losers)}
+                </div>
+            </div>
+        </div>
+
+        <div class="section" style="margin-bottom: 40px;">
+            <div class="section-title">Sector Performance</div>
+            <div class="sector-list">
+                {"".join(f'''
+                <div class="sector-row">
+                    <div>
+                        <span class="sector-name">{item['sector']}</span>
+                        <span class="sector-count">{item['count']} stocks</span>
+                    </div>
+                    <div class="price-change {'positive' if item['change'] >= 0 else 'negative'}">
+                        {item['change']:+.2f}%
+                    </div>
+                </div>''' for item in sector_performance)}
+            </div>
+        </div>
+
+        <div class="section full-stocks">
+            <div class="section-title">All Stocks</div>
+            <table class="stocks-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Name</th>
+                        <th>Sector</th>
+                        <th>Price</th>
+                        <th>Change</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {"".join(f'''
+                    <tr>
+                        <td><strong>{item[0]}</strong></td>
+                        <td>{item[1]}</td>
+                        <td>{item[4]}</td>
+                        <td>${item[2]:,.2f}</td>
+                        <td class="{'positive' if item[3] >= 0 else 'negative'}">{item[3]:+.2f}%</td>
+                        <td>
+                            <div class="action-buttons">
+                                <form action="/api/watchlist/add" method="POST">
+                                    <input type="hidden" name="symbol" value="{item[0]}">
+                                    <button type="submit" class="btn btn-watch">Watch</button>
+                                </form>
+                                <form action="/buy" method="POST">
+                                    <input type="hidden" name="symbol" value="{item[0]}">
+                                    <button type="submit" class="btn btn-buy">Buy</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>''' for item in all_stocks)}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+"""
 
 
 if __name__ == '__main__':
