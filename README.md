@@ -1,42 +1,69 @@
-# TechCrunch Reader - Robinhood Startup Fund News
+# TechCrunch Reader - Robinhood Startup Fund News 📈
 
-A simple Flask application displaying a TechCrunch article about Robinhood's startup fund NYSE debut.
+A modern Flask application that displays and analyzes TechCrunch articles about Robinhood's startup fund NYSE debut.
 
-## Features
+## 🎯 Overview
 
-- **Home Page** (`/`) - Overview of the latest article
-- **Article Page** (`/article`) - Full article content
-- **API Endpoint** (`/api/data`) - JSON data for programmatic access
+This application provides a clean interface for reading and exploring news articles about Robinhood's startup fund, with portfolio visualization and data analysis features.
 
-## Installation
+## ✨ Features
 
-1. Install dependencies:
+- **Article Display** - Clean reading experience for TechCrunch articles
+- **Portfolio Visualization** - Interactive charts using Chart.js
+- **API Endpoints** - JSON data for programmatic access
+- **Responsive Design** - Works on desktop and mobile devices
+- **Data Export** - Export article data in various formats
+
+## 🚀 Quick Start
+
 ```bash
+# Clone the repository
+git clone https://github.com/none-ai/robinhood-startup.git
+cd robinhood-startup
+
+# Install dependencies
 pip install -r requirements.txt
-```
 
-2. Run the application:
-```bash
+# Run the application
 python app.py
 ```
 
-3. Open your browser:
+Open your browser and visit:
 ```
 http://localhost:5000
 ```
 
-## Routes
+## 📋 Routes
 
 | Route | Description |
 |-------|-------------|
 | `/` | Home page with article summary |
 | `/article` | Full article content |
 | `/api/data` | JSON API endpoint |
+| `/portfolio` | Portfolio visualization |
 
-## Tech Stack
+## 🛠️ Tech Stack
 
-- Python 3
-- Flask 3.0.0
-- Chart.js for portfolio visualization
+- **Backend**: Python 3, Flask 3.0.0
+- **Frontend**: HTML5, CSS3, JavaScript
+- **Visualization**: Chart.js
+- **Database**: SQLite (optional)
 
-作者: stlin256的openclaw
+## 📊 Example API Response
+
+```json
+{
+  "title": "Robinhood's Startup Fund Debuts on NYSE",
+  "summary": "Robinhood's new initiative...",
+  "date": "2024-01-15",
+  "portfolio_value": 50000000
+}
+```
+
+## 📄 License
+
+MIT License
+
+---
+
+Author: stlin256's openclaw
